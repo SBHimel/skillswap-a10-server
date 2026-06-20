@@ -31,31 +31,31 @@ const client = new MongoClient(uri, {
 
 const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`))
 
-// ১. গ্লোবাল টোকেন ভেরিফিকেশন মিডলওয়্যার (ঠিক আছে)
-const verifyToken = async (req, res, next) =>{
+// ১. গ্লোবাল টোকেন ভেরিফিকেশন মিডলওয়্যার
+const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
-  if(!authHeader || !authHeader.startsWith("Bearer")){
-    return res.status(401).json({msg: "Unauthorized"});
+  if (!authHeader || !authHeader.startsWith("Bearer")) {
+    return res.status(401).json({ msg: "Unauthorized" });
   }
 
-   const token = authHeader.split(" ")[1]
+  const token = authHeader.split(" ")[1]
 
-   if(!token){
-    return res.status(401).json({msg: "Unauthorized"});
-   }
+  if (!token) {
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
 
-   try{
-    const {payload} = await jwtVerify(token, JWKS)
+  try {
+    const { payload } = await jwtVerify(token, JWKS)
     req.user = payload
     next()
-   }catch(error){
+  } catch (error) {
     console.log(error)
-    return res.status(401).json({msg: "Unauthorized"})
-   }
+    return res.status(401).json({ msg: "Unauthorized" })
+  }
 }
 
-// ২. নতুন রোল-বেসড মিডলওয়্যারসমূহ (Role-based Middlewares)
+// ২. রোল-বেসড মিডলওয়্যারসমূহ
 const clientVerify = async (req, res, next) => {
   if (req.user.role !== "client") {
     return res.status(403).json({ msg: "Forbidden: Client Access Only" });
@@ -70,38 +70,61 @@ const freelancerVerify = async (req, res, next) => {
   next();
 };
 
-const adminVerify = async (req, res, next) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ msg: "Forbidden: Admin Access Only" });
-  }
-  next();
-};
-
 async function run() {
   try {
     await client.connect();
     
-    // ৩. ডাটাবেজ এবং কালেকশন রিনেম (SkillSwapDB অনুযায়ী)
-    const db = client.db("SkillSwapDB");
+    const db = client.db("skillswap");
     const usersCollection = db.collection("users");
     const tasksCollection = db.collection("tasks");
     const proposalsCollection = db.collection("proposals");
     const paymentsCollection = db.collection("payments");
-    const reviewsCollection = db.collection("reviews");
 
-    // ৪. ক্লায়েন্ট নতুন টাস্ক পোস্ট করার জন্য API (POST API)
+    
+    app.get("/client-stats", verifyToken, clientVerify, async (req, res) => {
+      try {
+        const email = req.user.email;
+
+        // ক্লায়েন্টের মোট পোস্ট করা টাস্কের সংখ্যা
+        const totalTasks = await tasksCollection.countDocuments({ client_email: email });
+        
+        // ওপেন টাস্কের সংখ্যা
+        const openTasks = await tasksCollection.countDocuments({ client_email: email, status: "open" });
+        
+        // ইন প্রগ্রেস টাস্কের সংখ্যা
+        const inProgressTasks = await tasksCollection.countDocuments({ client_email: email, status: "In Progress" });
+
+        // মোট কত খরচ করেছে (Total Spent) - পেমেন্ট কালেকশন থেকে সামেশন
+        const payments = await paymentsCollection.find({ clientEmail: email }).toArray();
+        const totalSpent = payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+
+        res.json({
+          totalTasks,
+          openTasks,
+          inProgressTasks,
+          totalSpent
+        });
+      } catch (error) {
+        res.status(500).json({ msg: "Error fetching stats", error: error.message });
+      }
+    });
+
+
+    // [REQ 2] ক্লায়েন্ট নতুন টাস্ক পোস্ট করার জন্য API (POST API)
     app.post("/tasks", verifyToken, clientVerify, async (req, res) => {
       try {
         const data = req.body;
         
         const newTask = {
           title: data.title,
+          category: data.category, // ফ্রন্টএন্ড মোডাল অনুযায়ী ক্যাটাগরি
           description: data.description,
           budget: Number(data.budget),
+          deadline: data.deadline, // ফ্রন্টএন্ড মোডাল অনুযায়ী ডেডলাইন
           image: data.image || "",
-          client_id: req.user.id,
+          client_id: req.user.id || req.user.sub,
           client_email: req.user.email,
-          status: data.status || "pending", // তোমার মোডাল অনুযায়ী 'pending' রাখা হলো
+          status: "open", // ডকস অনুযায়ী ডিফল্ট স্ট্যাটাস অবশ্যই 'open' হবে
           createdAt: new Date()
         };
 
@@ -112,7 +135,107 @@ async function run() {
       }
     });
 
-    // ৫. স্ট্রাইপ ডাইনামিক পেমেন্ট সফল হওয়ার পর ডাটা সেভ করার API
+
+    // [REQ 3] ক্লায়েন্টের নিজের পোস্ট করা সব টাস্ক দেখার API (My Tasks View)
+    app.get("/client-tasks", verifyToken, clientVerify, async (req, res) => {
+      try {
+        const email = req.user.email;
+        const result = await tasksCollection.find({ client_email: email }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ msg: "Error fetching tasks", error: error.message });
+      }
+    });
+
+    // ==========================================
+    // 🟢 [NEW REQ] টাস্ক ডিলিট করার API (Delete Task)
+    // ==========================================
+    app.delete("/tasks/:id", verifyToken, clientVerify, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+
+        // নিরাপত্তা নিশ্চিত করতে শুধু এই ক্লায়েন্টের টাস্ক কিনা তা যাচাই করা যেতে পারে
+        const task = await tasksCollection.findOne(query);
+        if (!task) {
+          return res.status(404).json({ msg: "Task not found" });
+        }
+        if (task.client_email !== req.user.email) {
+          return res.status(403).json({ msg: "Forbidden: You can only delete your own tasks" });
+        }
+
+        const result = await tasksCollection.deleteOne(query);
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ msg: "Error deleting task", error: error.message });
+      }
+    });
+
+    // ==========================================
+    // 🟢 [NEW REQ] টাস্ক আপডেট/এডিট করার API (Edit Task)
+    // ==========================================
+    app.patch("/tasks/:id", verifyToken, clientVerify, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const data = req.body;
+
+       
+        const task = await tasksCollection.findOne(filter);
+        if (!task) {
+          return res.status(404).json({ msg: "Task not found" });
+        }
+        if (task.client_email !== req.user.email) {
+          return res.status(403).json({ msg: "Forbidden: You can only edit your own tasks" });
+        }
+
+       
+        const updatedDoc = {
+          $set: {
+            title: data.title,
+            category: data.category,
+            budget: Number(data.budget), // তোমার ডাটাবেজে ফিল্ডের নাম 'budget'
+            deadline: data.deadline,
+          },
+        };
+
+        const result = await tasksCollection.updateOne(filter, updatedDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ msg: "Error updating task", error: error.message });
+      }
+    });
+
+
+    // [REQ 4] ক্লায়েন্টের নিজের টাস্কগুলোর প্রপোজাল দেখার API (Manage Proposals View)
+    app.get("/client-proposals", verifyToken, clientVerify, async (req, res) => {
+      try {
+        const email = req.user.email;
+        // যে টাস্কগুলো এই ক্লায়েন্ট পোস্ট করেছে, সেগুলোর ওপর আসা প্রপোজাল ফিল্টার
+        const result = await proposalsCollection.find({ clientEmail: email }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ msg: "Error fetching proposals", error: error.message });
+      }
+    });
+
+
+    // [REQ 5] প্রপোজাল রিজেক্ট করার API (Reject Proposal)
+    app.patch("/proposals/reject/:id", verifyToken, clientVerify, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await proposalsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "Rejected" } }
+        );
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ msg: "Error rejecting proposal", error: error.message });
+      }
+    });
+
+
+    // [REQ 6] স্ট্রাইপ পেমেন্ট সফল হওয়ার পর ডাটা সেভ করার API
     app.post("/payment/success", verifyToken, clientVerify, async (req, res) => {
       try {
         const { sessionId, taskId, freelancerName, budget, taskTitle } = req.body;
@@ -122,7 +245,6 @@ async function run() {
           return res.json({ msg: "Payment record already exists!" });
         }
 
-        // পেমেন্ট কালেকশনে ডাটা ইনসার্ট
         const paymentInfo = {
           sessionId,
           taskId,
@@ -134,10 +256,10 @@ async function run() {
         };
         await paymentsCollection.insertOne(paymentInfo);
 
-        // টাস্কের স্ট্যাটাস আপডেট করে "completed" বা "booked" করা
+        // ডকস অনুযায়ী: পেমেন্ট সাকসেস হলে টাস্ক আপডেট হয়ে "In Progress" হবে
         await tasksCollection.updateOne(
           { _id: new ObjectId(taskId) },
-          { $set: { status: "completed" } }
+          { $set: { status: "In Progress" } }
         );
 
         res.json({ msg: "Payment successfully recorded and task updated!" });
