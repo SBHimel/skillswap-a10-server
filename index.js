@@ -148,14 +148,13 @@ async function run() {
     });
 
     // ==========================================
-    // 🟢 [NEW REQ] টাস্ক ডিলিট করার API (Delete Task)
+    // 🟢টাস্ক ডিলিট করার API (Delete Task)
     // ==========================================
     app.delete("/tasks/:id", verifyToken, clientVerify, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
 
-        // নিরাপত্তা নিশ্চিত করতে শুধু এই ক্লায়েন্টের টাস্ক কিনা তা যাচাই করা যেতে পারে
         const task = await tasksCollection.findOne(query);
         if (!task) {
           return res.status(404).json({ msg: "Task not found" });
@@ -172,7 +171,7 @@ async function run() {
     });
 
     // ==========================================
-    // 🟢 [NEW REQ] টাস্ক আপডেট/এডিট করার API (Edit Task)
+    // 🟢 টাস্ক আপডেট/এডিট করার API (Edit Task)
     // ==========================================
     app.patch("/tasks/:id", verifyToken, clientVerify, async (req, res) => {
       try {
@@ -194,7 +193,7 @@ async function run() {
           $set: {
             title: data.title,
             category: data.category,
-            budget: Number(data.budget), // তোমার ডাটাবেজে ফিল্ডের নাম 'budget'
+            budget: Number(data.budget), 
             deadline: data.deadline,
           },
         };
@@ -206,6 +205,55 @@ async function run() {
       }
     });
 
+
+    // [REQ 7] ফ্রিল্যান্সারদের জন্য সমস্ত Open টাস্ক দেখার API (Browse Tasks)
+    app.get("/available-tasks", verifyToken, async (req, res) => {
+      try {
+        const result = await tasksCollection.find({ status: "open" }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ msg: "Error fetching available tasks", error: error.message });
+      }
+    });
+
+    // [REQ 8] ফ্রিল্যান্সারদের প্রপোজাল সাবমিট করার সহজ ও ফুল-প্রুফ API
+    app.post("/submit-proposal", verifyToken, async (req, res) => {
+      try {
+        const proposalInfo = {
+          taskId: req.body.taskId,
+          taskTitle: req.body.taskTitle,
+          
+          clientEmail: req.body.clientEmail || req.body.client_email, 
+          freelancerEmail: req.user.email,
+          freelancerName: req.user.name || "Freelancer",
+          budget: Number(req.body.budget),
+          duration: Number(req.body.duration),
+          message: req.body.message,
+          status: "Pending",
+          createdAt: new Date()
+        };
+
+        const result = await proposalsCollection.insertOne(proposalInfo);
+        
+        
+        res.status(201).send({ success: true, result });
+      } catch (error) {
+        
+        console.error("Proposal insert failed:", error);
+        res.status(500).send({ success: false, error: error.message });
+      }
+    });
+
+    // [REQ 9] ফ্রিল্যান্সারদের নিজেদের পাঠানো প্রপোজাল লিস্ট দেখার API
+    app.get("/my-proposals", verifyToken, async (req, res) => {
+      try {
+        const email = req.user.email; // টোকেন থেকে ফ্রিল্যান্সারের ইমেইল নিলাম
+        const result = await proposalsCollection.find({ freelancerEmail: email }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
 
     // [REQ 4] ক্লায়েন্টের নিজের টাস্কগুলোর প্রপোজাল দেখার API (Manage Proposals View)
     app.get("/client-proposals", verifyToken, clientVerify, async (req, res) => {
@@ -235,10 +283,11 @@ async function run() {
     });
 
 
-    // [REQ 6] স্ট্রাইপ পেমেন্ট সফল হওয়ার পর ডাটা সেভ করার API
+    // [REQ 6] স্ট্রাইপ পেমেন্ট সফল হওয়ার পর ডাটা সেভ করার API (UPDATED)
     app.post("/payment/success", verifyToken, clientVerify, async (req, res) => {
       try {
-        const { sessionId, taskId, freelancerName, budget, taskTitle } = req.body;
+        // ফ্রন্টএন্ড থেকে taskId এর পাশাপাশি proposalId-ও নিয়ে নিলাম
+        const { sessionId, taskId, freelancerName, budget, taskTitle, proposalId } = req.body;
 
         const isExist = await paymentsCollection.findOne({ sessionId });
         if (isExist) {
@@ -256,13 +305,25 @@ async function run() {
         };
         await paymentsCollection.insertOne(paymentInfo);
 
-        // ডকস অনুযায়ী: পেমেন্ট সাকসেস হলে টাস্ক আপডেট হয়ে "In Progress" হবে
+        // ১. পেমেন্ট সফল হলে টাস্ক আপডেট হয়ে "In Progress" হবে
         await tasksCollection.updateOne(
           { _id: new ObjectId(taskId) },
           { $set: { status: "In Progress" } }
         );
 
-        res.json({ msg: "Payment successfully recorded and task updated!" });
+        // ২. ক্লায়েন্ট যে প্রপোজালটি সিলেক্ট করেছে সেটির স্ট্যাটাস হবে "Accepted"
+        await proposalsCollection.updateOne(
+          { _id: new ObjectId(proposalId) },
+          { $set: { status: "Accepted" } }
+        );
+
+        // ৩. ডকসের মেইন শর্ত: এই টাস্কের বাকি সব প্রপোজাল একসাথে "Rejected" হয়ে যাবে!
+        await proposalsCollection.updateMany(
+          { taskId: taskId, _id: { $ne: new ObjectId(proposalId) } }, 
+          { $set: { status: "Rejected" } }
+        );
+
+        res.json({ msg: "Payment recorded. Other proposals rejected!" });
       } catch (error) {
         res.status(500).json({ msg: "Server Error", error: error.message });
       }
