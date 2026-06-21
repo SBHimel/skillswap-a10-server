@@ -21,6 +21,7 @@ app.use(
 );
 app.use(express.json());
 
+
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
