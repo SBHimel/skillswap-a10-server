@@ -236,30 +236,30 @@ async function run() {
     });
 
     // প্রোফাইল আপডেট করার জন্য PATCH রুট
-   app.patch("/freelancer/profile/:email", verifyToken, async (req, res) => {
-  const filter = { email: req.params.email };
+    app.patch("/freelancer/profile/:email", verifyToken, async (req, res) => {
+      const filter = { email: req.params.email };
 
-  // শুধু যে ডাটাগুলো ফর্ম থেকে আসবে, সেগুলোই অবজেক্টে যোগ হবে
-  const updateFields = {};
-  if (req.body.name) updateFields.name = req.body.name;
-  if (req.body.photo) updateFields.image = req.body.photo; // খালি থাকলে আগের ইমেজ মুছবে না
-  if (req.body.hourlyRate) updateFields.hourlyRate = req.body.hourlyRate;
-  if (req.body.bio) updateFields.bio = req.body.bio;
-  if (req.body.skills) updateFields.skills = req.body.skills;
+      // শুধু যে ডাটাগুলো ফর্ম থেকে আসবে, সেগুলোই অবজেক্টে যোগ হবে
+      const updateFields = {};
+      if (req.body.name) updateFields.name = req.body.name;
+      if (req.body.photo) updateFields.image = req.body.photo; // খালি থাকলে আগের ইমেজ মুছবে না
+      if (req.body.hourlyRate) updateFields.hourlyRate = req.body.hourlyRate;
+      if (req.body.bio) updateFields.bio = req.body.bio;
+      if (req.body.skills) updateFields.skills = req.body.skills;
 
-  const updatedDoc = { $set: updateFields };
+      const updatedDoc = { $set: updateFields };
 
-  try {
-    const result = await usersCollection.updateOne(filter, updatedDoc);
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: "User not found!" });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error("Database update error:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
+      try {
+        const result = await usersCollection.updateOne(filter, updatedDoc);
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found!" });
+        }
+        res.json(result);
+      } catch (error) {
+        console.error("Database update error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
 
     // 🆕 🟢 নতুন এপিআই ২: [SUBMIT DELIVERABLE] প্রজেক্টের কাজ সাবমিট করা
 
@@ -609,6 +609,99 @@ async function run() {
         });
       } catch (error) {
         res.status(500).send({ error: true, message: error.message });
+      }
+    });
+
+    // ==========================================
+    // 🎯 SECTION 09: ADMIN DASHBOARD API ROUTES
+    // ==========================================
+
+    // ১. Admin Overview Stats
+    app.get("/admin/stats", async (theme, res) => {
+      try {
+        // ডাটাবেজের কালেকশন থেকে টোটাল কাউন্ট বা সাম বের করা
+        const totalUsers = await usersCollection.countDocuments();
+        const totalTasks = await tasksCollection.countDocuments();
+        const activeTasks = await tasksCollection.countDocuments({
+          status: "open",
+        });
+
+        // টোটাল রেভিনিউ হিসেব করা (পেমেন্ট কালেকশনের সব 'amount' যোগ করে)
+        const payments = await paymentsCollection.find().toArray();
+        const totalRevenue = payments.reduce(
+          (sum, payment) => sum + (payment.amount || 0),
+          0,
+        );
+
+        res.send({
+          totalUsers,
+          totalTasks,
+          activeTasks,
+          totalRevenue,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Stats আনতে সমস্যা হয়েছে", error });
+      }
+    });
+
+    // ২. Manage Users — সব ইউজারের লিস্ট দেখা
+    app.get("/admin/users", async (req, res) => {
+      try {
+        const result = await usersCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Users আনতে সমস্যা হয়েছে" });
+      }
+    });
+
+    // ৩. Manage Users — ইউজার ব্লক/আনব্লক করা
+    app.patch("/admin/users/:id/block", async (req, res) => {
+      try {
+        const userId = req.params.id;
+        const { isBlocked } = req.body; // ফ্রন্টএন্ড থেকে পাঠানো true/false
+
+        const filter = { _id: new ObjectId(userId) };
+        const updateDoc = {
+          $set: { isBlocked: isBlocked },
+        };
+
+        const result = await usersCollection.updateOne(filter, updateDoc);
+        res.send({ success: true, modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(500).send({ message: "User স্ট্যাটাস আপডেট করতে সমস্যা" });
+      }
+    });
+
+    // ৪. Manage Tasks — সব টাস্কের লিস্ট দেখা
+    app.get("/admin/tasks", async (req, res) => {
+      try {
+        const result = await tasksCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Tasks আনতে সমস্যা হয়েছে" });
+      }
+    });
+
+    // ৫. Manage Tasks — কোনো টাস্ক ডিলিট করা
+    app.delete("/admin/tasks/:id", async (req, res) => {
+      try {
+        const taskId = req.params.id;
+        const query = { _id: new ObjectId(taskId) };
+
+        const result = await tasksCollection.deleteOne(query);
+        res.send({ success: true, deletedCount: result.deletedCount });
+      } catch (error) {
+        res.status(500).send({ message: "Task ডিলিট করতে সমস্যা হয়েছে" });
+      }
+    });
+
+    // ৬. Transactions History — সব Stripe পেমেন্ট হিস্ট্রি দেখা
+    app.get("/admin/transactions", async (req, res) => {
+      try {
+        const result = await paymentsCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Transactions আনতে সমস্যা হয়েছে" });
       }
     });
 
