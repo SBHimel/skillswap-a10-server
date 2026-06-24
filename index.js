@@ -511,6 +511,7 @@ async function run() {
     );
 
     // [REQ 6] স্ট্রাইপ পেমেন্ট সফল হওয়ার পর ডাটা সেভ করার API (UPDATED)
+    // [REQ 6] স্ট্রাইপ পেমেন্ট সফল হওয়ার পর ডাটা সেভ করার API (UPDATED WITH FREELANCER EMAIL)
     app.post(
       "/payment/success",
       verifyToken,
@@ -521,6 +522,7 @@ async function run() {
             sessionId,
             taskId,
             freelancerName,
+            freelancerEmail, 
             budget,
             taskTitle,
             proposalId,
@@ -537,6 +539,7 @@ async function run() {
             taskTitle,
             clientEmail: req.user.email,
             freelancerName,
+            freelancerEmail, 
             amount: Number(budget),
             paidAt: new Date(),
           };
@@ -669,6 +672,17 @@ async function run() {
         res.send({ success: true, modifiedCount: result.modifiedCount });
       } catch (error) {
         res.status(500).send({ message: "User স্ট্যাটাস আপডেট করতে সমস্যা" });
+      }
+    });
+
+    app.post("/admin/users/check-status", async (req, res) => {
+      try {
+        const foundUser = await db
+          .collection("user")
+          .findOne({ email: req.body.email });
+        res.send({ isBlocked: foundUser?.isBlocked || false });
+      } catch (error) {
+        res.status(500).send({ isBlocked: false });
       }
     });
 
