@@ -532,7 +532,6 @@ async function run() {
           if (isExist) {
             return res.json({ msg: "Payment record already exists!" });
           }
-          
 
           const paymentInfo = {
             sessionId,
