@@ -419,16 +419,13 @@ async function run() {
     // [REQ 7] ফ্রিল্যান্সারদের জন্য সমস্ত Open টাস্ক দেখার API (Browse Tasks)
     app.get("/available-tasks", verifyToken, async (req, res) => {
       try {
-        
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 9;
         const search = req.query.search || "";
         const category = req.query.category || "";
 
-       
         let query = { status: "open" };
 
-        
         if (search) {
           query.title = { $regex: search, $options: "i" };
         }
@@ -461,7 +458,7 @@ async function run() {
     });
 
     // [REQ 8] ফ্রিল্যান্সারদের প্রপোজাল সাবমিট করার সহজ ও ফুল-প্রুফ API
-    
+
     app.post("/submit-proposal", verifyToken, async (req, res) => {
       try {
         const proposalInfo = {
