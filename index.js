@@ -419,8 +419,39 @@ async function run() {
     // [REQ 7] ফ্রিল্যান্সারদের জন্য সমস্ত Open টাস্ক দেখার API (Browse Tasks)
     app.get("/available-tasks", verifyToken, async (req, res) => {
       try {
-        const result = await tasksCollection.find({ status: "open" }).toArray();
-        res.send(result);
+        
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 9;
+        const search = req.query.search || "";
+        const category = req.query.category || "";
+
+       
+        let query = { status: "open" };
+
+        
+        if (search) {
+          query.title = { $regex: search, $options: "i" };
+        }
+        if (category && category !== "All") {
+          query.category = category;
+        }
+
+        const skipAmount = (page - 1) * limit;
+
+        const result = await tasksCollection
+          .find(query)
+          .skip(skipAmount)
+          .limit(limit)
+          .toArray();
+
+        const totalTasks = await tasksCollection.countDocuments(query);
+        const totalPages = Math.ceil(totalTasks / limit);
+
+        res.send({
+          tasks: result,
+          totalPages: totalPages,
+          currentPage: page,
+        });
       } catch (error) {
         res.status(500).json({
           msg: "Error fetching available tasks",
@@ -522,7 +553,7 @@ async function run() {
             sessionId,
             taskId,
             freelancerName,
-            freelancerEmail, 
+            freelancerEmail,
             budget,
             taskTitle,
             proposalId,
@@ -539,7 +570,7 @@ async function run() {
             taskTitle,
             clientEmail: req.user.email,
             freelancerName,
-            freelancerEmail, 
+            freelancerEmail,
             amount: Number(budget),
             paidAt: new Date(),
           };
