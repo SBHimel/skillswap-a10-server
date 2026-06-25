@@ -72,9 +72,13 @@ const freelancerVerify = async (req, res, next) => {
   next();
 };
 
-async function run() {
-  try {
-    await client.connect();
+// async function run() {
+//   try {
+//     await client.connect();
+
+client.connect(() => {
+  console.log('connecting to Mongo db');
+}).catch(console.dir)
 
     const db = client.db("skillswap");
     const usersCollection = db.collection("user");
@@ -749,14 +753,14 @@ async function run() {
     });
 
     // await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!",
-    );
-  } finally {
-    // Keeps connection alive
-  }
-}
-run().catch(console.dir);
+//     console.log(
+//       "Pinged your deployment. You successfully connected to MongoDB!",
+//     );
+//   } finally {
+//     // Keeps connection alive
+//   }
+// }
+// run().catch(console.dir);
 
 app.get("/", (req, res) => {
   res.send("SkillSwap Server is running fine!");
@@ -764,4 +768,6 @@ app.get("/", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-});
+})
+
+module.exports = app;
